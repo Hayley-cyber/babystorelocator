@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>UK Baby Goods Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+body { margin:0; font-family: system-ui, sans-serif; }
+#map { height: 100vh; }
+.controls { padding: 0.5rem; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.2); z-index: 1000; position: absolute; top: 10px; left: 10px; border-radius: 6px; max-height: 90vh; overflow: auto; }
+h3 { margin: 0.2rem 0; font-size: 1rem; }
+.checkboxes { display: flex; flex-wrap: wrap; gap: 0.25rem; max-width: 250px; }
+label.chip { background: #f3f4f6; padding: 0.25rem 0.5rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.85rem; white-space: nowrap; }
+label.chip input { margin-right: 0.25rem; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="controls">
+  <h3>Categories</h3>
+  <div id="categoryCheckboxes" class="checkboxes"></div>
+  <h3>Brands</h3>
+  <div style="display:flex;flex-direction:column;gap:.25rem;width:100%;">
+    <input id="brandSearch" type="search" placeholder="Search brands…" style="padding:.25rem .4rem; border:1px solid #e5e7eb; border-radius:.375rem; font-size:.85rem;" />
+    <div id="brandCheckboxes" class="checkboxes"></div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script>
+const DATA_SOURCE = 'csv'; // 'inline' or 'csv'
+const map = L.map('map').setView([54.5, -3], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+let storeData = [];
+let markers = [];
+
+function normalise(str) {
+  return (str || '').toString().trim().toLowerCase();
+}
+
+function uniqueValues(array) {
+  return Array.from(new Set(array.filter(Boolean)));
+}
+
+function buildCheckboxes(container, items, name) {
+  container.innerHTML = '';
+  items.forEach(val => {
+    const lbl = document.createElement('label');
+    lbl.className = 'chip';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = val;
+    cb.name = name;
+    cb.addEventListener('change', updateMap);
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(val));
+    container.appendChild(lbl);
+  });
+}
+
+function getSelectedValues(name) {
+  return Array.from(document.querySelectorAll('input[name="'+name+'"]:checked')).map(cb => cb.value);
+}
+
+function containsAny(needles, haystack) {
+  return needles.some(n => haystack.map(normalise).includes(normalise(n)));
+}
+
+function updateMap() {
+  const selectedCats = getSelectedValues('category');
+  const selectedBrands = getSelectedValues('brand');
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+
+  storeData.forEach(store => {
+    const cats = (store.categories || '').split(';').map(s => s.trim()).filter(Boolean);
+    const brands = (store.brands || '').split(';').map(s => s.trim()).filter(Boolean);
+    const catOk = selectedCats.length === 0 || containsAny(selectedCats, cats);
+    const brandOk = selectedBrands.length === 0 || containsAny(selectedBrands, brands);
+    if (catOk && brandOk) {
+      const marker = L.marker([+store.lat, +store.lng]).addTo(map)
+        .bindPopup(\`<strong>\${store.name}</strong><br>\${store.address || ''}<br>
+          \${store.phone ? '📞 ' + store.phone + '<br>' : ''}
+          \${store.email ? '✉️ ' + store.email + '<br>' : ''}
+          \${store.website ? '<a href="\${store.website}" target="_blank">Website</a>' : ''}
+        \`);
+      markers.push(marker);
+    }
+  });
+}
+
+function loadData() {
+  if (DATA_SOURCE === 'inline') {
+    storeData = [
+      { name: 'Little Angels Baby Store', lat: 51.5154, lng: -0.1410, address: '123 Oxford Street, London W1', phone: '020 7946 0000', email: 'info@littleangels.co.uk', website: 'https://example.com/london', categories: 'Strollers;Clothing', brands: 'Bugaboo;Joie' },
+      { name: 'North Star Baby', lat: 53.4808, lng: -2.2426, address: '1 Deansgate, Manchester M3', phone: '0161 555 1234', email: 'hello@northstarbaby.co.uk', website: 'https://example.com/manchester', categories: 'Feeding & Nursing;Car Seats', brands: 'Tommee Tippee;Maxi-Cosi' }
+    ];
+    initFilters();
+  } else {
+    Papa.parse('stores.csv?nocache=' + Date.now(), {
+      download: true,
+      header: true,
+      complete: function(results) {
+        storeData = results.data.filter(r => r.lat && r.lng);
+        initFilters();
+      }
+    });
+  }
+}
+
+function initFilters() {
+  const allCats = uniqueValues(storeData.flatMap(s => (s.categories || '').split(';').map(t => t.trim())));
+  const allBrands = uniqueValues(storeData.flatMap(s => (s.brands || '').split(';').map(t => t.trim())));
+  buildCheckboxes(document.getElementById('categoryCheckboxes'), allCats, 'category');
+  buildCheckboxes(document.getElementById('brandCheckboxes'), allBrands, 'brand');
+  updateMap();
+}
+
+document.getElementById('brandSearch').addEventListener('input', () => {
+  const term = normalise(document.getElementById('brandSearch').value);
+  Array.from(document.getElementById('brandCheckboxes').querySelectorAll('label.chip')).forEach(lbl => {
+    const txt = normalise(lbl.textContent);
+    lbl.style.display = !term || txt.includes(term) ? '' : 'none';
+  });
+});
+
+loadData();
+</script>
+</body>
+</html>
